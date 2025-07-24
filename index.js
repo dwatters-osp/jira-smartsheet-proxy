@@ -5,6 +5,13 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
+const cors = require('cors');
+app.use(cors({
+  origin: '*',
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Token', 'X-API-Key'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
+
 // Proxy for Smartsheet API
 app.all('/api/smartsheet/*', async (req, res) => {
   try {
