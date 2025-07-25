@@ -11,6 +11,8 @@ export default async function handler(req, res) {
   const smartsheetKey = req.headers['x-api-key'];
   const jiraToken = req.headers['x-api-token'];
 
+  console.log("Jira Token received:", !!jiraToken); // Debug: Check if token is present
+
   try {
     // Step 1: Get Jira issue keys assigned to beinorthal (single call with maxResults=1000)
     const jiraResp = await axios.get(
@@ -22,6 +24,8 @@ export default async function handler(req, res) {
         }
       }
     );
+
+    console.log("Jira Response Data:", jiraResp.data); // Debug: Full Jira response for inspection
 
     const issues = jiraResp.data?.issues || [];
     if (!Array.isArray(issues)) {
@@ -69,6 +73,9 @@ export default async function handler(req, res) {
       }
     }
 
+    console.log("Existing Keys Count:", existingKeys.size); // Debug: Should be 0 if sheet is empty
+    console.log("New Rows Prepared:", newRows.length); // Debug: Should match jiraKeys.length if sheet empty
+
     // Step 5: Send add request to Smartsheet (using POST for new rows)
     let updateResult = null;
     if (newRows.length > 0) {
@@ -92,7 +99,7 @@ export default async function handler(req, res) {
       smartsheetUpdate: updateResult || null
     });
   } catch (error) {
-    console.error("❌ Sync failed:", error.message);
+    console.error("❌ Sync failed:", error.response ? error.response.data : error.message); // Improved: Log API error details
     return res.status(500).json({
       synced: false,
       error: error.message || 'Unknown error'
