@@ -12,21 +12,28 @@ export default async function handler(req, res) {
   const jiraToken = req.headers['x-api-token'];
 
   try {
-    // Step 1: Get Jira issues assigned to beinorthal
-    const jiraResp = await axios.get(
-      'https://prodfjira.cspire.net/rest/api/2/search?jql=assignee=beinorthal&maxResults=100',
-      {
-        headers: {
-          Authorization: `Bearer ${jiraToken}`,
-          Accept: 'application/json'
-        }
-      }
-    );
+    // Step 1: Get all Jira issue keys assigned to beinorthal (with pagination)
+    let startAt = 0;
+    const maxResults = 100;
+    let issues = [];
+    let total = 0;
 
-    const issues = jiraResp.data?.issues;
-    if (!Array.isArray(issues)) {
-      throw new Error("Jira response is missing 'issues' array.");
-    }
+    do {
+      const jiraResp = await axios.get(
+        `https://prodfjira.cspire.net/rest/api/2/search?jql=assignee=beinorthal&fields=key&startAt=${startAt}&maxResults=${maxResults}`,
+        {
+          headers: {
+            Authorization: `Bearer ${jiraToken}`,
+            Accept: 'application/json'
+          }
+        }
+      );
+
+      const currentIssues = jiraResp.data?.issues || [];
+      issues.push(...currentIssues);
+      total = jiraResp.data.total;
+      startAt += currentIssues.length;
+    } while (startAt < total);
 
     const jiraKeys = issues.map(issue => issue.key);
 
@@ -40,7 +47,7 @@ export default async function handler(req, res) {
     const columns = sheetResp.data?.columns || [];
     const rows = sheetResp.data?.rows || [];
 
-    const orderNumCol = columns.find(col => col.title.toLowerCase().includes('order'));
+    const orderNumCol = columns.find(col => col.title.trim() === 'Order #');
     if (!orderNumCol) {
       throw new Error("Smartsheet column 'Order #' not found.");
     }
@@ -58,29 +65,20 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 4: Prepare rows to add
+    // Step 4: Prepare new rows to add for missing keys
     const newRows = [];
-    for (const row of rows) {
-      const rowHasOrderNum = row.cells.some(cell => cell.columnId === columnId && cell.value);
-      if (rowHasOrderNum) continue;
-
-      const match = jiraKeys.find(key => {
-        return Object.values(row.cells)
-          .some(cell => typeof cell.value === 'string' && cell.value.includes(key));
-      });
-
-      if (match) {
+    for (const key of jiraKeys) {
+      if (!existingKeys.has(key)) {
         newRows.push({
-          id: row.id,
-          cells: [{ columnId, value: match }]
+          cells: [{ columnId, value: key }]
         });
       }
     }
 
-    // Step 5: Send update request to Smartsheet
+    // Step 5: Send add request to Smartsheet (using POST for new rows)
     let updateResult = null;
     if (newRows.length > 0) {
-      const updateResp = await axios.put(
+      const updateResp = await axios.post(
         `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
         newRows,
         {
