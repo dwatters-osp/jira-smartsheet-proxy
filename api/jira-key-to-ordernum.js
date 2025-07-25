@@ -12,30 +12,24 @@ export default async function handler(req, res) {
   const jiraToken = req.headers['x-api-token'];
 
   try {
-    // Step 1: Get all Jira issue keys assigned to beinorthal (with pagination)
-    let startAt = 0;
-    const maxResults = 100;
-    let issues = [];
-    let total = 0;
-
-    do {
-      const jiraResp = await axios.get(
-        `https://prodfjira.cspire.net/rest/api/2/search?jql=assignee=beinorthal&fields=key&startAt=${startAt}&maxResults=${maxResults}`,
-        {
-          headers: {
-            Authorization: `Bearer ${jiraToken}`,
-            Accept: 'application/json'
-          }
+    // Step 1: Get Jira issue keys assigned to beinorthal (single call with maxResults=1000)
+    const jiraResp = await axios.get(
+      'https://prodfjira.cspire.net/rest/api/2/search?jql=assignee=beinorthal&fields=key&maxResults=1000',
+      {
+        headers: {
+          Authorization: `Bearer ${jiraToken}`,
+          Accept: 'application/json'
         }
-      );
+      }
+    );
 
-      const currentIssues = jiraResp.data?.issues || [];
-      issues.push(...currentIssues);
-      total = jiraResp.data.total;
-      startAt += currentIssues.length;
-    } while (startAt < total);
+    const issues = jiraResp.data?.issues || [];
+    if (!Array.isArray(issues)) {
+      throw new Error("Jira response is missing 'issues' array.");
+    }
 
     const jiraKeys = issues.map(issue => issue.key);
+    console.log("Fetched Jira Keys:", jiraKeys.length); // Debug: Check how many keys were fetched
 
     // Step 2: Get the Smartsheet sheet data
     const sheetResp = await axios.get(`https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`, {
