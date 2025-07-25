@@ -1,19 +1,3 @@
-const express = require('express');
-const axios = require('axios');
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(express.json());
-
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Token, X-API-Key');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  next();
-});
-
-// ✅ Diagnostics route
 app.post('/api/test-connections', async (req, res) => {
   const { smartsheetSheetId } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
@@ -30,7 +14,8 @@ app.post('/api/test-connections', async (req, res) => {
       headers: { Authorization: `Bearer ${smartsheetKey}` }
     });
     results.smartsheet = smartsheetResp.status === 200;
-  } catch {
+  } catch (e) {
+    console.error('❌ Smartsheet API error:', e.response?.status, e.message);
     results.smartsheet = false;
   }
 
@@ -42,55 +27,15 @@ app.post('/api/test-connections', async (req, res) => {
       }
     });
     results.jira = jiraResp.status === 200;
-  } catch {
+  } catch (e) {
+    console.error('❌ Jira API error:', e.response?.status, e.message);
     results.jira = false;
   }
 
-  res.json(results);
-});
-
-// Proxy for Smartsheet API
-app.all('/api/smartsheet/*', async (req, res) => {
   try {
-    const apiPath = req.url.replace('/api/smartsheet', '');
-    const response = await axios({
-      method: req.method,
-      url: `https://api.smartsheet.com${apiPath}`,
-      headers: {
-        ...req.headers,
-        'Authorization': `Bearer ${req.headers['x-api-key']}`,
-        'Content-Type': 'application/json'
-      },
-      data: req.body
-    });
-    res.status(response.status).json(response.data);
-  } catch (error) {
-    res.status(error.response?.status || 500).send(error.message);
+    res.status(200).json(results);
+  } catch (finalErr) {
+    console.error('❌ Failed to send JSON response:', finalErr);
+    res.status(500).send('Internal server error');
   }
-});
-
-// Proxy for Jira API
-app.all('/api/jira/*', async (req, res) => {
-  try {
-    const apiPath = req.url.replace('/api/jira', '');
-    const response = await axios({
-      method: req.method,
-      url: `https://prodfjira.cspire.net${apiPath}`,
-      headers: {
-        ...req.headers,
-        'Authorization': `Bearer ${req.headers['x-api-token']}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      data: req.body
-    });
-    res.status(response.status).json(response.data);
-  } catch (error) {
-    console.error('Jira proxy error:', error.response?.status, error.message);
-    res.status(error.response?.status || 500).send(error.message || 'Unknown proxy error');
-  }
-});
-
-app.listen(port, () => {
-  console.log(`Proxy server running on port ${port}`);
 });
