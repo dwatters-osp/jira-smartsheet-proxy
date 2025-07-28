@@ -14,6 +14,7 @@ export default async function handler(req, res) {
     proxyReachable: true,
     smartsheet: false,
     jiraKeysReceived: Array.isArray(jiraKeys) && jiraKeys.length > 0,
+    receivedKeysCount: Array.isArray(jiraKeys) ? jiraKeys.length : 0,  // NEW: Echo back the count
     orderSync: null
   };
 
