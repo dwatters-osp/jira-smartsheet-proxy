@@ -10,13 +10,11 @@ export default async function handler(req, res) {
   const { smartsheetSheetId, jiraKeys } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
 
-  if (!smartsheetSheetId || !Array.isArray(jiraKeys) || jiraKeys.length === 0) {
-    return res.status(400).json({
-      error: 'Missing smartsheetSheetId or jiraKeys[]'
-    });
-  }
-
   try {
+    if (!Array.isArray(jiraKeys) || jiraKeys.length === 0) {
+      throw new Error("Jira keys not provided or invalid.");
+    }
+
     // Step 1: Get the Smartsheet sheet data
     const sheetResp = await axios.get(`https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`, {
       headers: {
@@ -36,7 +34,6 @@ export default async function handler(req, res) {
 
     // Step 2: Build a Set of existing order numbers to avoid duplicates
     const existingKeys = new Set();
-
     for (const row of rows) {
       for (const cell of row.cells) {
         if (cell.columnId === columnId && typeof cell.value === 'string') {
@@ -46,13 +43,16 @@ export default async function handler(req, res) {
     }
 
     // Step 3: Prepare new rows to add for missing keys
-    const newRows = jiraKeys
-      .filter(key => !existingKeys.has(key))
-      .map(key => ({
-        cells: [{ columnId, value: key }]
-      }));
+    const newRows = [];
+    for (const key of jiraKeys) {
+      if (!existingKeys.has(key)) {
+        newRows.push({
+          cells: [{ columnId, value: key }]
+        });
+      }
+    }
 
-    // Step 4: Add new rows to Smartsheet if any
+    // Step 4: Send add request to Smartsheet (using POST for new rows)
     let updateResult = null;
     if (newRows.length > 0) {
       const updateResp = await axios.post(
@@ -74,7 +74,6 @@ export default async function handler(req, res) {
       addedKeys: newRows.map(r => r.cells[0].value),
       smartsheetUpdate: updateResult || null
     });
-
   } catch (error) {
     console.error("❌ Sync failed:", error.response ? error.response.data : error.message);
     return res.status(500).json({
