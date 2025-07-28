@@ -7,35 +7,17 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { smartsheetSheetId } = req.body;
+  const { smartsheetSheetId, jiraKeys } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
-  const jiraToken = req.headers['x-api-token'];
 
-  console.log("Jira Token received:", !!jiraToken); // Debug: Check if token is present
+  if (!smartsheetSheetId || !Array.isArray(jiraKeys) || jiraKeys.length === 0) {
+    return res.status(400).json({
+      error: 'Missing smartsheetSheetId or jiraKeys[]'
+    });
+  }
 
   try {
-    // Step 1: Get Jira issue keys assigned to beinorthal (single call with maxResults=1000)
-    const jiraResp = await axios.get(
-      'https://prodfjira.cspire.net/rest/api/2/search?jql=assignee=beinorthal&fields=key&maxResults=1000',
-      {
-        headers: {
-          Authorization: `Bearer ${jiraToken}`,
-          Accept: 'application/json'
-        }
-      }
-    );
-
-    console.log("Jira Response Data:", jiraResp.data); // Debug: Full Jira response for inspection
-
-    const issues = jiraResp.data?.issues || [];
-    if (!Array.isArray(issues)) {
-      throw new Error("Jira response is missing 'issues' array.");
-    }
-
-    const jiraKeys = issues.map(issue => issue.key);
-    console.log("Fetched Jira Keys:", jiraKeys.length); // Debug: Check how many keys were fetched
-
-    // Step 2: Get the Smartsheet sheet data
+    // Step 1: Get the Smartsheet sheet data
     const sheetResp = await axios.get(`https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`, {
       headers: {
         Authorization: `Bearer ${smartsheetKey}`
@@ -52,7 +34,7 @@ export default async function handler(req, res) {
 
     const columnId = orderNumCol.id;
 
-    // Step 3: Build a Set of existing order numbers to avoid duplicates
+    // Step 2: Build a Set of existing order numbers to avoid duplicates
     const existingKeys = new Set();
 
     for (const row of rows) {
@@ -63,20 +45,14 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 4: Prepare new rows to add for missing keys
-    const newRows = [];
-    for (const key of jiraKeys) {
-      if (!existingKeys.has(key)) {
-        newRows.push({
-          cells: [{ columnId, value: key }]
-        });
-      }
-    }
+    // Step 3: Prepare new rows to add for missing keys
+    const newRows = jiraKeys
+      .filter(key => !existingKeys.has(key))
+      .map(key => ({
+        cells: [{ columnId, value: key }]
+      }));
 
-    console.log("Existing Keys Count:", existingKeys.size); // Debug: Should be 0 if sheet is empty
-    console.log("New Rows Prepared:", newRows.length); // Debug: Should match jiraKeys.length if sheet empty
-
-    // Step 5: Send add request to Smartsheet (using POST for new rows)
+    // Step 4: Add new rows to Smartsheet if any
     let updateResult = null;
     if (newRows.length > 0) {
       const updateResp = await axios.post(
@@ -98,8 +74,9 @@ export default async function handler(req, res) {
       addedKeys: newRows.map(r => r.cells[0].value),
       smartsheetUpdate: updateResult || null
     });
+
   } catch (error) {
-    console.error("❌ Sync failed:", error.response ? error.response.data : error.message); // Improved: Log API error details
+    console.error("❌ Sync failed:", error.response ? error.response.data : error.message);
     return res.status(500).json({
       synced: false,
       error: error.message || 'Unknown error'
