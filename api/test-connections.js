@@ -3,68 +3,56 @@ import axios from 'axios';
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Token, X-API-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { smartsheetSheetId } = req.body;
+  const { smartsheetSheetId, jiraKeys } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
-  const jiraToken = req.headers['x-api-token'];
 
   const results = {
     proxyReachable: true,
     smartsheet: false,
-    jira: false,
-    orderSync: null // name updated for clarity in content.js
+    jiraKeysReceived: Array.isArray(jiraKeys) && jiraKeys.length > 0,
+    orderSync: null
   };
 
-  // 🌐 Test Smartsheet connection
+  if (!smartsheetSheetId || !smartsheetKey) {
+    return res.status(400).json({ error: 'Missing Smartsheet credentials.' });
+  }
+
   try {
-    const smartsheetResp = await axios.get(
+    // 1. Test Smartsheet access
+    const sheetResp = await axios.get(
       `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`,
       {
         headers: { Authorization: `Bearer ${smartsheetKey}` }
       }
     );
-    results.smartsheet = smartsheetResp.status === 200;
+    results.smartsheet = sheetResp.status === 200;
   } catch (e) {
     results.smartsheet = false;
+    return res.status(200).json(results); // No need to continue if Smartsheet is bad
   }
 
-  // 🧷 Test Jira connection
-  try {
-    const jiraResp = await axios.get(
-      'https://prodfjira.cspire.net/rest/api/2/myself',
-      {
-        headers: {
-          Authorization: `Bearer ${jiraToken}`,
-          Accept: 'application/json'
-        }
-      }
-    );
-    results.jira = jiraResp.status === 200;
-  } catch (e) {
-    results.jira = false;
-  }
-
-  // 🚀 Only run sync if both APIs are connected
-  if (results.smartsheet && results.jira) {
+  // 2. Only proceed with syncing if both checks pass
+  if (results.smartsheet && results.jiraKeysReceived) {
     try {
       const syncResp = await axios.post(
         'https://jira-smartsheet-proxy.vercel.app/api/jira-key-to-ordernum',
-        { smartsheetSheetId },
+        { smartsheetSheetId, jiraKeys },
         {
           headers: {
             'Content-Type': 'application/json',
-            'X-API-Key': smartsheetKey,
-            'X-API-Token': jiraToken
+            'X-API-Key': smartsheetKey
           }
         }
       );
 
       results.orderSync = {
         success: true,
-        added: syncResp.data?.added || 0
+        added: syncResp.data?.addedCount || 0,
+        addedKeys: syncResp.data?.addedKeys || []
       };
     } catch (err) {
       results.orderSync = {
@@ -75,7 +63,9 @@ export default async function handler(req, res) {
   } else {
     results.orderSync = {
       success: false,
-      error: 'Skipped due to failed Jira or Smartsheet connection.'
+      error: !results.jiraKeysReceived
+        ? 'No Jira keys received.'
+        : 'Smartsheet connection failed.'
     };
   }
 
