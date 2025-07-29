@@ -27,7 +27,7 @@ router.post('/test-connections', async (req, res) => {
     smartsheet: false,
     jiraKeysReceived: Array.isArray(jiraKeys) && jiraKeys.length > 0,
     receivedKeysCount: Array.isArray(jiraKeys) ? jiraKeys.length : 0,
-    orderSync: null
+    sheetName: null
   };
 
   if (!smartsheetSheetId || !smartsheetKey) {
@@ -42,73 +42,18 @@ router.post('/test-connections', async (req, res) => {
       }
     );
     results.smartsheet = sheetResp.status === 200;
-
-    const columns = sheetResp.data?.columns || [];
-    const rows = sheetResp.data?.rows || [];
-
-    const orderNumCol = columns.find(col => col.title.trim() === 'Order #');
-    if (!orderNumCol) {
-      throw new Error("Smartsheet column 'Order #' not found.");
+    if (results.smartsheet) {
+      results.sheetName = sheetResp.data.name || 'Unnamed Sheet';
     }
 
-    const columnId = orderNumCol.id;
-
-    const existingKeys = new Set();
-    for (const row of rows) {
-      for (const cell of row.cells) {
-        if (cell.columnId === columnId && typeof cell.value === 'string') {
-          existingKeys.add(cell.value.trim());
-        }
-      }
-    }
-
-    const newRows = [];
-    for (const key of jiraKeys) {
-      if (!existingKeys.has(key)) {
-        newRows.push({
-          cells: [{ columnId, value: key }]
-        });
-      }
-    }
-
-    let updateResult = null;
-    if (newRows.length > 0) {
-      const batchSize = 400;
-      for (let i = 0; i < newRows.length; i += batchSize) {
-        const batch = newRows.slice(i, i + batchSize);
-        const updateResp = await axios.post(
-          `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
-          batch,
-          {
-            headers: {
-              Authorization: `Bearer ${smartsheetKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        updateResult = updateResult ? [...updateResult, updateResp.data] : [updateResp.data];
-      }
-      results.orderSync = {
-        success: true,
-        added: newRows.length,
-        addedKeys: newRows.map(r => r.cells[0].value)
-      };
-    } else {
-      results.orderSync = {
-        success: true,
-        added: 0,
-        addedKeys: []
-      };
-    }
+    // Skipping row addition/update for now – just testing connection and receiving keys
+    // If you want to re-enable later, add the column/row logic here
 
     return res.status(200).json(results);
   } catch (e) {
     results.smartsheet = false;
-    results.orderSync = {
-      success: false,
-      error: e.response?.data?.error || e.message || 'Unknown error'
-    };
-    console.error("❌ Sync failed:", e.response ? e.response.data : e.message);
+    results.sheetName = null;
+    console.error("❌ Connection test failed:", e.response ? e.response.data : e.message);
     return res.status(200).json(results);
   }
 });
