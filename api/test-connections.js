@@ -3,6 +3,7 @@ import axios from 'axios';
 
 export const router = express.Router();
 
+// Preflight
 router.options('/test-connections', (req, res) => {
   res.set({
     'Access-Control-Allow-Origin': '*',
@@ -12,6 +13,7 @@ router.options('/test-connections', (req, res) => {
   res.sendStatus(200);
 });
 
+// Main handler
 router.post('/test-connections', async (req, res) => {
   res.set({
     'Access-Control-Allow-Origin': '*',
@@ -19,7 +21,11 @@ router.post('/test-connections', async (req, res) => {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key'
   });
 
-  const { smartsheetSheetId, jiraKeys } = req.body;
+  console.log('➡ /test-connections hit');
+  console.log('Headers:', req.headers);
+  console.log('Body:', JSON.stringify(req.body));
+
+  const { smartsheetSheetId, jiraKeys } = req.body || {};
   const smartsheetKey = req.headers['x-api-key'];
 
   const results = {
@@ -35,33 +41,21 @@ router.post('/test-connections', async (req, res) => {
     return res.status(400).json({ error: 'Missing Smartsheet credentials.' });
   }
 
-  // Optional: Validate sheet ID format (uncomment if you want stricter checks)
-  // if (!/^[a-zA-Z0-9]{16}$/.test(smartsheetSheetId)) {
-  //   return res.status(400).json({ error: 'Invalid Smartsheet sheet ID format.' });
-  // }
-
   try {
+    // 1. Fetch sheet
     const sheetResp = await axios.get(
       `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`,
-      {
-        headers: { Authorization: `Bearer ${smartsheetKey}` }
-      }
+      { headers: { Authorization: `Bearer ${smartsheetKey}` } }
     );
+
     results.smartsheet = sheetResp.status === 200;
-    if (results.smartsheet) {
-      results.sheetName = sheetResp.data.name || 'Unnamed Sheet';
-    } else {
-      throw new Error('Failed to connect to Smartsheet sheet.');
-    }
+    results.sheetName = sheetResp.data?.name || null;
 
     const columns = sheetResp.data?.columns || [];
     const rows = sheetResp.data?.rows || [];
 
     const orderNumCol = columns.find(col => col.title.trim() === 'Order #');
-    if (!orderNumCol) {
-      throw new Error("Smartsheet column 'Order #' not found.");
-    }
-
+    if (!orderNumCol) throw new Error("Smartsheet column 'Order #' not found.");
     const columnId = orderNumCol.id;
 
     const existingKeys = new Set();
@@ -73,59 +67,55 @@ router.post('/test-connections', async (req, res) => {
       }
     }
 
-    const newRows = [];
-    for (const key of jiraKeys) {
-      if (!existingKeys.has(key)) {
-        newRows.push({
-          cells: [{ columnId, value: key }]
-        });
-      }
-    }
+    const newRows = (jiraKeys || [])
+      .filter(key => !existingKeys.has(key))
+      .map(key => ({ cells: [{ columnId, value: key }] }));
 
     if (newRows.length > 0) {
       const batchSize = 400;
-      let addedCount = 0;
       const addedKeys = [];
       for (let i = 0; i < newRows.length; i += batchSize) {
         const batch = newRows.slice(i, i + batchSize);
-        const updateResp = await axios.post(
-          `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
-          batch,
-          {
-            headers: {
-              Authorization: `Bearer ${smartsheetKey}`,
-              'Content-Type': 'application/json'
+        console.log('Posting batch to Smartsheet:', batch.length, 'rows');
+
+        try {
+          const updateResp = await axios.post(
+            `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
+            batch,
+            {
+              headers: {
+                Authorization: `Bearer ${smartsheetKey}`,
+                'Content-Type': 'application/json'
+              }
             }
+          );
+          if (updateResp.status !== 200) {
+            console.error('❌ Smartsheet rejected batch:', updateResp.data);
           }
-        );
-        if (updateResp.status !== 200) {
-          throw new Error(`Row addition failed: ${updateResp.data.message || 'Unknown error'}`);
+          addedKeys.push(...batch.map(r => r.cells[0].value));
+        } catch (err) {
+          console.error('❌ Error posting batch:', err.response?.data || err.message);
+          throw err; // let the outer catch return JSON safely
         }
-        addedCount += batch.length;
-        addedKeys.push(...batch.map(r => r.cells[0].value));
       }
+
       results.orderSync = {
         success: true,
-        added: addedCount,
+        added: addedKeys.length,
         addedKeys
       };
     } else {
-      results.orderSync = {
-        success: true,
-        added: 0,
-        addedKeys: []
-      };
+      results.orderSync = { success: true, added: 0, addedKeys: [] };
     }
 
     return res.status(200).json(results);
-  } catch (e) {
+  } catch (err) {
+    console.error('❌ Fatal error in /test-connections:', err.response?.data || err.message || err);
     results.smartsheet = false;
-    results.sheetName = null;
     results.orderSync = {
       success: false,
-      error: e.response?.data?.message || e.message || 'Unknown error'
+      error: err.response?.data?.message || err.message || 'Unknown error'
     };
-    console.error("❌ Sync failed:", e.response ? e.response.data : e.message);
-    return res.status(200).json(results);
+    return res.status(200).json(results); // always respond to avoid 502
   }
 });
