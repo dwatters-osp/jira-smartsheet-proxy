@@ -9,6 +9,10 @@ app.use(express.json());
 // Mount the router at /api
 app.use('/api', testConnectionsRouter);
 
+app.post('/ping', (req, res) => {
+  res.json({ success: true });
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
