@@ -7,8 +7,6 @@
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" }
       ]
     }
-  ],
-  "functions": {
-    "api/**/*.js": { "runtime": "nodejs18" }  
-  }
+  ]
+
 }
