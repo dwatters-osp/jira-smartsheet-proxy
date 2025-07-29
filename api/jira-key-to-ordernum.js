@@ -7,6 +7,11 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  if (req.method !== 'POST') {
+    console.log(`Invalid method: ${req.method}`);
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
   const { smartsheetSheetId, jiraKeys } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
 
@@ -52,20 +57,24 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 4: Send add request to Smartsheet (using POST for new rows)
+    // Step 4: Send add request to Smartsheet (using POST for new rows, with batching if >400)
     let updateResult = null;
     if (newRows.length > 0) {
-      const updateResp = await axios.post(
-        `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
-        newRows,
-        {
-          headers: {
-            Authorization: `Bearer ${smartsheetKey}`,
-            'Content-Type': 'application/json'
+      const batchSize = 400; // Smartsheet limit
+      for (let i = 0; i < newRows.length; i += batchSize) {
+        const batch = newRows.slice(i, i + batchSize);
+        const updateResp = await axios.post(
+          `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
+          batch,
+          {
+            headers: {
+              Authorization: `Bearer ${smartsheetKey}`,
+              'Content-Type': 'application/json'
+            }
           }
-        }
-      );
-      updateResult = updateResp.data;
+        );
+        updateResult = updateResult ? [...updateResult, updateResp.data] : [updateResp.data];  // Aggregate results
+      }
     }
 
     return res.status(200).json({
