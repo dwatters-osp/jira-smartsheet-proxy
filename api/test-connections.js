@@ -1,16 +1,23 @@
+import express from 'express';
 import axios from 'axios';
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+export const router = express.Router();
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+router.options('/test-connections', (req, res) => {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key'
+  });
+  res.sendStatus(200);
+});
 
-  if (req.method !== 'POST') {
-    console.log(`Invalid method: ${req.method}`);
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+router.post('/test-connections', async (req, res) => {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key'
+  });
 
   const { smartsheetSheetId, jiraKeys } = req.body;
   const smartsheetKey = req.headers['x-api-key'];
@@ -28,7 +35,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Test Smartsheet access and fetch sheet data
     const sheetResp = await axios.get(
       `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`,
       {
@@ -47,7 +53,6 @@ export default async function handler(req, res) {
 
     const columnId = orderNumCol.id;
 
-    // 2. Build a Set of existing order numbers to avoid duplicates
     const existingKeys = new Set();
     for (const row of rows) {
       for (const cell of row.cells) {
@@ -57,7 +62,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // 3. Prepare new rows to add for missing keys
     const newRows = [];
     for (const key of jiraKeys) {
       if (!existingKeys.has(key)) {
@@ -67,10 +71,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // 4. Add new rows to Smartsheet (with batching for large lists)
     let updateResult = null;
     if (newRows.length > 0) {
-      const batchSize = 400; // Smartsheet limit per request
+      const batchSize = 400;
       for (let i = 0; i < newRows.length; i += batchSize) {
         const batch = newRows.slice(i, i + batchSize);
         const updateResp = await axios.post(
@@ -106,6 +109,6 @@ export default async function handler(req, res) {
       error: e.response?.data?.error || e.message || 'Unknown error'
     };
     console.error("❌ Sync failed:", e.response ? e.response.data : e.message);
-    return res.status(200).json(results); // Return 200 with error details for client
+    return res.status(200).json(results);
   }
-}
+});
