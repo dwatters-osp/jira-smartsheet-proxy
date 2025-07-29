@@ -23,92 +23,113 @@ router.post('/test-connections', async (req, res) => {
 
   console.log('➡ /test-connections hit');
   console.log('Headers:', req.headers);
-  console.log('Body:', JSON.stringify(req.body));
+  console.log('Body keys:', Object.keys(req.body));
 
-  const { smartsheetSheetId, jiraKeys } = req.body || {};
+  const { smartsheetSheetId, jiraRows } = req.body || {};
   const smartsheetKey = req.headers['x-api-key'];
 
   const results = {
     proxyReachable: true,
     smartsheet: false,
-    jiraKeysReceived: Array.isArray(jiraKeys) && jiraKeys.length > 0,
-    receivedKeysCount: Array.isArray(jiraKeys) ? jiraKeys.length : 0,
-    sheetName: null,
+    receivedRowsCount: Array.isArray(jiraRows) ? jiraRows.length : 0,
     orderSync: null
   };
 
-  if (!smartsheetSheetId || !smartsheetKey) {
-    return res.status(400).json({ error: 'Missing Smartsheet credentials.' });
+  if (!smartsheetSheetId || !smartsheetKey || !Array.isArray(jiraRows)) {
+    return res.status(400).json({ error: 'Missing Smartsheet credentials or jiraRows.' });
   }
 
   try {
-    // 1. Fetch sheet
+    // 1. Fetch sheet metadata
     const sheetResp = await axios.get(
       `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}`,
       { headers: { Authorization: `Bearer ${smartsheetKey}` } }
     );
 
     results.smartsheet = sheetResp.status === 200;
-    results.sheetName = sheetResp.data?.name || null;
-
     const columns = sheetResp.data?.columns || [];
     const rows = sheetResp.data?.rows || [];
 
-    const orderNumCol = columns.find(col => col.title.trim() === 'Order #');
-    if (!orderNumCol) throw new Error("Smartsheet column 'Order #' not found.");
-    const columnId = orderNumCol.id;
+    // Column ID lookup by title
+    const colMap = {};
+    for (const col of columns) {
+      colMap[col.title.trim()] = col.id;
+    }
 
+    // 2. Build set of existing Jira keys (Order #)
     const existingKeys = new Set();
     for (const row of rows) {
-      for (const cell of row.cells) {
-        if (cell.columnId === columnId && typeof cell.value === 'string') {
-          existingKeys.add(cell.value.trim());
-        }
+      const orderCell = row.cells.find(c => c.columnId === colMap['Order #']);
+      if (orderCell?.value) {
+        existingKeys.add(orderCell.value.toString().trim());
       }
     }
 
-    const newRows = (jiraKeys || [])
-      .filter(key => !existingKeys.has(key))
-      .map(key => ({ cells: [{ columnId, value: key }] }));
+    // 3. Prepare new rows for Smartsheet
+    const newRows = [];
+    const skipped = [];
+    for (const row of jiraRows) {
+      if (existingKeys.has(row.orderNumber)) {
+        skipped.push(row.orderNumber);
+        continue;
+      }
 
-    if (newRows.length > 0) {
-      const batchSize = 400;
-      const addedKeys = [];
-      for (let i = 0; i < newRows.length; i += batchSize) {
-        const batch = newRows.slice(i, i + batchSize);
-        console.log('Posting batch to Smartsheet:', batch.length, 'rows');
+      newRows.push({
+        cells: [
+          { columnId: colMap['Order #'], value: row.orderNumber },
+          { columnId: colMap['CSpire Install Date'], value: row.installDate || '' },
+          { columnId: colMap['CSpire Install Time'], value: row.installTime || '' },
+          { columnId: colMap['Address'], value: row.address || '' },
+          { columnId: colMap['City'], value: row.city || '' },
+          { columnId: colMap['State'], value: row.state || '' },
+          { columnId: colMap['Zip'], value: row.zip || '' },
+          { columnId: colMap['Billing Code'], value: row.billingCode || '' },
+          { columnId: colMap['Fiber Hood'], value: row.fiberHood || '' },
+          { columnId: colMap['Account Name'], value: row.accountName || '' },
+          { columnId: colMap['Phone Input'], value: row.phone || '' },
+          { columnId: colMap['Email'], value: row.email || '' },
+          { columnId: colMap['Handoff Date'], value: row.handoffDate || '' }
+        ]
+      });
+    }
 
-        try {
-          const updateResp = await axios.post(
-            `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
-            batch,
-            {
-              headers: {
-                Authorization: `Bearer ${smartsheetKey}`,
-                'Content-Type': 'application/json'
-              }
+    // 4. Batch insert (Smartsheet max 400 per request)
+    const addedKeys = [];
+    for (let i = 0; i < newRows.length; i += 400) {
+      const batch = newRows.slice(i, i + 400);
+      console.log(`Posting batch of ${batch.length} rows to Smartsheet...`);
+
+      try {
+        const updateResp = await axios.post(
+          `https://api.smartsheet.com/2.0/sheets/${smartsheetSheetId}/rows`,
+          batch,
+          {
+            headers: {
+              Authorization: `Bearer ${smartsheetKey}`,
+              'Content-Type': 'application/json'
             }
-          );
-          if (updateResp.status !== 200) {
-            console.error('❌ Smartsheet rejected batch:', updateResp.data);
           }
+        );
+        if (updateResp.status === 200) {
           addedKeys.push(...batch.map(r => r.cells[0].value));
-        } catch (err) {
-          console.error('❌ Error posting batch:', err.response?.data || err.message);
-          throw err; // let the outer catch return JSON safely
+        } else {
+          console.error('❌ Smartsheet rejected batch:', updateResp.data);
         }
+      } catch (err) {
+        console.error('❌ Error posting batch:', err.response?.data || err.message);
+        throw err;
       }
-
-      results.orderSync = {
-        success: true,
-        added: addedKeys.length,
-        addedKeys
-      };
-    } else {
-      results.orderSync = { success: true, added: 0, addedKeys: [] };
     }
+
+    results.orderSync = {
+      success: true,
+      added: addedKeys.length,
+      addedKeys,
+      skipped
+    };
 
     return res.status(200).json(results);
+
   } catch (err) {
     console.error('❌ Fatal error in /test-connections:', err.response?.data || err.message || err);
     results.smartsheet = false;
