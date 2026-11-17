@@ -21,12 +21,14 @@ router.post('/test-connections', async (req, res) => {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key'
   });
 
-  console.log('➡ /test-connections hit');
-  console.log('Headers:', req.headers);
-  console.log('Body keys:', Object.keys(req.body));
-
   const { smartsheetSheetId, jiraRows } = req.body || {};
   const smartsheetKey = req.headers['x-api-key'];
+
+  // Never log req.headers: X-API-Key is the customer's Smartsheet token.
+  console.log(
+    `➡ /test-connections hit: ${Array.isArray(jiraRows) ? jiraRows.length : 'no'} Jira rows, ` +
+    `sheet id ${smartsheetSheetId ? 'set' : 'MISSING'}, api key ${smartsheetKey ? 'set' : 'MISSING'}`
+  );
 
   const results = {
     proxyReachable: true,
@@ -127,11 +129,15 @@ router.post('/test-connections', async (req, res) => {
       addedKeys,
       skipped
     };
+    console.log(`✅ Sync done: added ${addedKeys.length}, skipped ${skipped.length} (already in sheet), of ${jiraRows.length} Jira rows`);
 
     return res.status(200).json(results);
 
   } catch (err) {
-    console.error('❌ Fatal error in /test-connections:', err.response?.data || err.message || err);
+    // Status + Smartsheet's error body only; never the axios error object (its config holds the Bearer token).
+    // One line so Render shows it as a single log entry.
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : (err.message || 'Unknown error');
+    console.error(`❌ Sync failed (HTTP ${err.response?.status ?? 'n/a'}): ${detail}`);
     results.smartsheet = false;
     results.orderSync = {
       success: false,
