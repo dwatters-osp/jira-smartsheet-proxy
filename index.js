@@ -1,5 +1,6 @@
 import express from 'express';
 import { router as testConnectionsRouter } from './api/test-connections.js';
+import { router as clientLogRouter } from './api/client-log.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,6 +13,7 @@ app.use(express.json({ limit: '5mb' }));
 
 // Mount the router at /api
 app.use('/api', testConnectionsRouter);
+app.use('/api', clientLogRouter); // extension step-by-step logs → Render logs ("🧩 ext ...")
 
 app.post('/ping', (req, res) => {
   res.json({ success: true });
